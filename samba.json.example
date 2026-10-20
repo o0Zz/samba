@@ -1,0 +1,33 @@
+{
+  "workgroup": "WORKGROUP",
+  "recycle": true,
+  "permissions": true,
+  "global": {
+    "log level": "1"
+  },
+  "users": [
+    { "name": "alice", "password_file": "/run/secrets/alice_password" },
+    { "name": "bob", "password": "change-me", "uid": 1001, "group": "staff", "gid": 1001 }
+  ],
+  "shares": [
+    {
+      "name": "public",
+      "path": "/shares/public",
+      "readonly": true,
+      "guest": true,
+      "comment": "Read-only public files"
+    },
+    {
+      "name": "team",
+      "path": "/shares/team",
+      "browsable": true,
+      "readonly": false,
+      "guest": false,
+      "users": ["alice", "bob"],
+      "admins": ["alice"],
+      "options": {
+        "hide dot files": "yes"
+      }
+    }
+  ]
+}

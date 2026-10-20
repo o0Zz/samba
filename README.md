@@ -24,12 +24,24 @@ OR set local storage:
                 -v /path/to/directory:/mount \
                 -d dperson/samba -p
 
+## Persistent data
+
+The image declares no volumes. The samba configuration and users are rebuilt
+from the options, environment variables or JSON file on each start. Only mount
+your share directories. If you add users by hand with `smbpasswd` inside the
+container and want to keep them when the container is recreated, mount a volume
+on `/var/lib/samba`:
+
+    sudo docker run -it --name samba -p 139:139 -p 445:445                 -v samba-data:/var/lib/samba                 -v /path/to/directory:/mount                 -d dperson/samba -p
+
 ## Configuration
 
     sudo docker run -it --rm dperson/samba -h
     Usage: samba.sh [-opt] [command]
     Options (fields in '[]' are optional, '<>' are required):
         -h          This help
+        -C "<path>" Apply a JSON configuration file (shares, users, options)
+                    required arg: "<path>" - full file path in container
         -c "<from:to>" setup character mapping for file/directory names
                     required arg: "<from:to>" character mappings separated by ','
         -G "<section;parameter>" Provide generic section option for smb.conf
@@ -77,6 +89,7 @@ OR set local storage:
 ENVIRONMENT VARIABLES
 
  * `CHARMAP` - As above, configure character mapping
+ * `CONFIG` - As above, apply a JSON configuration file
  * `GENERIC` - As above, configure a generic section option (See NOTE3 below)
  * `GLOBAL` - As above, configure a global option (See NOTE3 below)
  * `IMPORT` - As above, import a smbpassword file
@@ -101,6 +114,63 @@ container configured to use the hosts network stack.
 
 **NOTE3**: optionally supports additional variables starting with the same name,
 IE `SHARE` also will work for `SHARE2`, `SHARE3`... `SHAREx`, etc.
+
+## JSON configuration file
+
+Instead of passing everything on the command line, you can describe the whole
+setup in one JSON file and point `-C` (or the `CONFIG` environment variable) at
+it. The file is applied on each start, before the other options and
+environment variables. See [samba.json.example](samba.json.example):
+
+    {
+      "workgroup": "WORKGROUP",
+      "permissions": true,
+      "global": { "log level": "1" },
+      "users": [
+        { "name": "alice", "password_file": "/run/secrets/alice_password" },
+        { "name": "bob", "password": "change-me", "uid": 1001,
+          "group": "staff", "gid": 1001 }
+      ],
+      "shares": [
+        { "name": "public", "path": "/shares/public", "readonly": true,
+          "guest": true },
+        { "name": "team", "path": "/shares/team", "readonly": false,
+          "guest": false, "users": ["alice", "bob"], "admins": ["alice"],
+          "options": { "hide dot files": "yes" } }
+      ]
+    }
+
+Top level keys (all optional):
+
+ * `workgroup` (string), `charmap` (string), `import` (smbpasswd file path)
+ * `include` (string or array of smb.conf files to include)
+ * `global` (object) - any smb.conf `[global]` option, IE `"log level": "2"`
+ * `recycle` (bool) - `false` disables the recycle bin
+ * `nmbd`, `permissions`, `widelinks`, `smb1` (bool) - same as `-n`, `-p`, `-W`
+   and `-S`
+ * `users` (array) - `name` and either `password` or `password_file`
+   (required), optional `uid`, `group`, `gid`
+ * `shares` (array) - `name` and `path` (required), optional `browsable`,
+   `readonly`, `guest` (bool), `users`, `admins`, `writelist` (arrays of
+   user names), `comment`, and `options` (object of any smb.conf share option)
+
+Prefer `password_file` over `password` so no password is stored in the JSON
+file. With docker compose, the password files (or the whole JSON file) can be
+provided as secrets:
+
+    services:
+      samba:
+        image: dperson/samba
+        environment:
+          CONFIG: /config/samba.json
+        volumes:
+          - ./samba.json:/config/samba.json:ro
+          - /srv/shares:/shares:z
+        secrets:
+          - alice_password
+    secrets:
+      alice_password:
+        file: ./secrets/alice_password
 
 ## Examples
 

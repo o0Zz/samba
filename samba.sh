@@ -183,6 +183,69 @@ widelinks() { local file=/etc/samba/smb.conf \
     sed -i 's/\(follow symlinks = yes\)/'"$replace"'/' $file
 }
 
+### config: apply a JSON configuration file
+# Arguments:
+#   file) JSON file (see README.md / samba.json.example for the format)
+# Return: configured global options, shares and users
+config() { local file="$1" sep=$'\x1f' name path browse ro guest users admins \
+            writelist comment passwd passwdfile id group gid key value
+    local yn='def yn: if . == null then "" elif . == true or . == "yes"
+                    then "yes" else "no" end;
+              def list: if . == null then "" elif type == "array"
+                    then join(",") else tostring end;
+              def str: if . == null then "" else tostring end;'
+    [[ -r $file ]] || { echo "ERROR: config file not readable: $file" >&2
+                exit 14; }
+    jq -e 'type == "object"' "$file" >/dev/null ||
+        { echo "ERROR: config file is not a JSON object: $file" >&2; exit 14; }
+
+    value="$(jq -r '.charmap | values' "$file")"
+    [[ $value ]] && charmap "$value"
+    while IFS= read -r value; do
+        global "$value"
+    done < <(jq -r '.global // {} | to_entries[] | "\(.key) = \(.value)"' \
+                "$file")
+    value="$(jq -r '.import | values' "$file")"
+    [[ $value ]] && import "$value"
+    [[ $(jq -r '.recycle' "$file") == false ]] && recycle
+    while IFS="$sep" read -r name path browse ro guest users admins writelist \
+                comment; do
+        [[ $name && $path ]] || { echo "ERROR: share needs name and path" >&2
+                    exit 14; }
+        share "$name" "$path" "$browse" "$ro" "$guest" "$users" "$admins" \
+                    "$writelist" "$comment"
+    done < <(jq -r "$yn"' .shares[]? | [(.name|str), (.path|str),
+                (.browsable|yn), (.readonly|yn), (.guest|yn), (.users|list),
+                (.admins|list), (.writelist|list), (.comment|str)]
+                | join("\u001f")' "$file")
+    while IFS="$sep" read -r name value; do
+        generic "$name" "$value"
+    done < <(jq -r '.shares[]? | .name as $n | .options // {} | to_entries[]
+                | "\($n)\u001f\(.key) = \(.value)"' "$file")
+    [[ $(jq -r '.smb1' "$file") == true ]] && smb
+    while IFS="$sep" read -r name passwd passwdfile id group gid; do
+        [[ $passwdfile ]] && { [[ -r $passwdfile ]] ||
+                    { echo "ERROR: password_file not readable: $passwdfile" >&2
+                    exit 14; }
+                    passwd="$(head -n1 "$passwdfile" | tr -d '\r')"; }
+        [[ $name && $passwd ]] || { echo "ERROR: user needs name and" \
+                    "password or password_file" >&2; exit 14; }
+        user "$name" "$passwd" "$id" "$group" "$gid"
+    done < <(jq -r "$yn"' .users[]? | [(.name|str), (.password|str),
+                (.password_file|str), (.uid|str), (.group|str), (.gid|str)]
+                | join("\u001f")' "$file")
+    value="$(jq -r '.workgroup | values' "$file")"
+    [[ $value ]] && workgroup "$value"
+    [[ $(jq -r '.widelinks' "$file") == true ]] && widelinks
+    while IFS= read -r value; do
+        include "$value"
+    done < <(jq -r '.include | if type == "array" then .[] else values end' \
+                "$file")
+    [[ $(jq -r '.nmbd' "$file") == true ]] && NMBD="true"
+    [[ $(jq -r '.permissions' "$file") == true ]] && PERMISSIONS="true"
+    return 0
+}
+
 ### usage: Help
 # Arguments:
 #   none)
@@ -191,6 +254,8 @@ usage() { local RC="${1:-0}"
     echo "Usage: ${0##*/} [-opt] [command]
 Options (fields in '[]' are optional, '<>' are required):
     -h          This help
+    -C \"<path>\" Apply a JSON configuration file (shares, users, options)
+                required arg: \"<path>\" - full file path in container
     -c \"<from:to>\" setup character mapping for file/directory names
                 required arg: \"<from:to>\" character mappings separated by ','
     -G \"<section;parameter>\" Provide generic section option for smb.conf
@@ -241,9 +306,10 @@ The 'command' (if provided and valid) will be run instead of samba
 [[ "${USERID:-""}" =~ ^[0-9]+$ ]] && usermod -u $USERID -o smbuser
 [[ "${GROUPID:-""}" =~ ^[0-9]+$ ]] && groupmod -g $GROUPID -o smb
 
-while getopts ":hc:G:g:i:nprs:Su:Ww:I:" opt; do
+while getopts ":hC:c:G:g:i:nprs:Su:Ww:I:" opt; do
     case "$opt" in
         h) usage ;;
+        C) CONFIG="$OPTARG" ;;
         c) charmap "$OPTARG" ;;
         G) eval generic $(sed 's/^/"/; s/$/"/; s/;/" "/g' <<< $OPTARG) ;;
         g) global "$OPTARG" ;;
@@ -262,6 +328,8 @@ while getopts ":hc:G:g:i:nprs:Su:Ww:I:" opt; do
     esac
 done
 shift $(( OPTIND - 1 ))
+
+[[ "${CONFIG:-""}" ]] && config "$CONFIG"
 
 [[ "${CHARMAP:-""}" ]] && charmap "$CHARMAP"
 while read i; do
