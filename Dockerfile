@@ -1,5 +1,5 @@
-FROM alpine
-MAINTAINER David Personette <dperson@gmail.com>
+FROM alpine:3.24
+LABEL org.opencontainers.image.authors="David Personette <dperson@gmail.com>"
 
 # Install samba
 RUN apk --no-cache --no-progress upgrade && \

@@ -1,6 +1,6 @@
-FROM arm64v8/alpine
+FROM arm64v8/alpine:3.24
 COPY qemu-aarch64-static /usr/bin/
-MAINTAINER David Personette <dperson@gmail.com>
+LABEL org.opencontainers.image.authors="David Personette <dperson@gmail.com>"
 
 # Install samba
 RUN apk --no-cache --no-progress upgrade && \
